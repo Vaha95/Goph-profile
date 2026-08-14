@@ -9,23 +9,27 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gophprofile/avatars-service/internal/domain"
-
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // ErrNotFound is returned when the requested avatar does not exist (or has been deleted).
 var ErrNotFound = errors.New("avatar not found")
+
+// ErrDuplicateKey is returned when an idempotency key conflict is detected.
+var ErrDuplicateKey = errors.New("duplicate idempotency key")
 
 type AvatarRepository interface {
 	Create(ctx context.Context, avatar *domain.Avatar) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Avatar, error)
 	GetLatestByUserID(ctx context.Context, userID string) (*domain.Avatar, error)
 	ListByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Avatar, error)
+	ClaimProcessing(ctx context.Context, id uuid.UUID, idempotencyKey string) error
 	UpdateProcessingStatus(ctx context.Context, id uuid.UUID, status string) error
 	UpdateUploadStatus(ctx context.Context, id uuid.UUID, status string) error
 	UpdateThumbnailKeys(ctx context.Context, id uuid.UUID, keys map[string]string) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error
-	SoftDeleteByUserID(ctx context.Context, userID string) error
+	SoftDeleteLatestByUserID(ctx context.Context, userID string) error
 	SoftDeleteOwned(ctx context.Context, id uuid.UUID, userID string) error
 	SoftDeleteLatestOwnedByUserID(ctx context.Context, userID string) error
 	GetDeletedInfo(ctx context.Context, id uuid.UUID) (*domain.Avatar, error)
@@ -70,10 +74,41 @@ func (r *avatarRepo) Create(ctx context.Context, avatar *domain.Avatar) error {
 	return err
 }
 
+// ClaimProcessing atomically claims the avatar for processing by setting the
+// idempotency key and moving status to in_progress.
+// Returns ErrDuplicateKey if another consumer already claimed (unique constraint violation).
+// Returns ErrNotFound if the avatar does not exist, is already complete, or has been claimed.
+func (r *avatarRepo) ClaimProcessing(ctx context.Context, id uuid.UUID, idempotencyKey string) error {
+	query := `UPDATE avatars
+		SET processing_status = $1, idempotency_key = $2
+		WHERE id = $3 AND idempotency_key IS NULL AND processing_status <> $4`
+	result, err := r.db.ExecContext(ctx, query,
+		domain.ProcessingInProgress, idempotencyKey, id,
+		domain.ProcessingComplete,
+	)
+	if err != nil {
+		if isPostgresUniqueViolation(err) {
+			return ErrDuplicateKey
+		}
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func isPostgresUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
+
 func (r *avatarRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {
 	avatar := &domain.Avatar{}
 	query := `SELECT id, user_id, file_name, mime_type, size_bytes, s3_key,
-		thumbnail_s3_keys, upload_status, processing_status, created_at, updated_at, deleted_at
+		thumbnail_s3_keys, upload_status, processing_status, idempotency_key,
+		created_at, updated_at, deleted_at
 		FROM avatars WHERE id = $1 AND deleted_at IS NULL`
 
 	err := r.db.GetContext(ctx, avatar, query, id)
@@ -192,7 +227,7 @@ func (r *avatarRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (r *avatarRepo) SoftDeleteByUserID(ctx context.Context, userID string) error {
+func (r *avatarRepo) SoftDeleteLatestByUserID(ctx context.Context, userID string) error {
 	query := `UPDATE avatars SET deleted_at = NOW() WHERE id IN (SELECT id FROM avatars WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1)`
 	result, err := r.db.ExecContext(ctx, query, userID)
 	if err != nil {

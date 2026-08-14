@@ -5,9 +5,10 @@ import (
 )
 
 type AvatarUploadEvent struct {
-	AvatarID string `json:"avatar_id"`
-	UserID   string `json:"user_id"`
-	S3Key    string `json:"s3_key"`
+	AvatarID       string `json:"avatar_id"`
+	UserID         string `json:"user_id"`
+	S3Key          string `json:"s3_key"`
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type ThumbnailSize struct {

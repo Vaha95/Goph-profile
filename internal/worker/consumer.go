@@ -213,15 +213,20 @@ func (c *Consumer) handleMessages(ctx context.Context, ch *amqp.Channel, msgs <-
 
 func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amqp.Delivery) {
 	var event struct {
-		AvatarID string `json:"avatar_id"`
-		UserID   string `json:"user_id"`
-		S3Key    string `json:"s3_key"`
+		AvatarID       string `json:"avatar_id"`
+		UserID         string `json:"user_id"`
+		S3Key          string `json:"s3_key"`
+		IdempotencyKey string `json:"idempotency_key"`
 	}
 
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
 		log.Printf("failed to unmarshal event, moving to DLQ: %v", err)
 		msg.Nack(false, false)
 		return
+	}
+
+	if event.IdempotencyKey == "" {
+		event.IdempotencyKey = event.AvatarID + ":" + event.S3Key
 	}
 
 	avatarID, err := uuid.Parse(event.AvatarID)
@@ -231,27 +236,23 @@ func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amq
 		return
 	}
 
-	avatar, err := c.repo.GetByID(ctx, avatarID)
+	// Atomically claim this avatar for processing. If another consumer already
+	// claimed this idempotency key, the DB unique index will reject — we ack
+	// the duplicate and bail.
+	err = c.repo.ClaimProcessing(ctx, avatarID, event.IdempotencyKey)
 	if err != nil {
+		if errors.Is(err, repository.ErrDuplicateKey) {
+			log.Printf("avatar %s already claimed by another consumer, acking", event.AvatarID)
+			msg.Ack(false)
+			return
+		}
 		if errors.Is(err, repository.ErrNotFound) {
-			// The avatar no longer exists (deleted before processing): nothing to do.
+			// Avatar was deleted or already processed — nothing to do.
 			log.Printf("avatar %s not found, dropping message", event.AvatarID)
 			msg.Ack(false)
 			return
 		}
-		log.Printf("failed to get avatar %s: %v", event.AvatarID, err)
-		c.retryOrDLQ(ctx, ch, msg, event.AvatarID)
-		return
-	}
-
-	if avatar.ProcessingStatus == domain.ProcessingComplete {
-		log.Printf("avatar %s already processed, skipping", event.AvatarID)
-		msg.Ack(false)
-		return
-	}
-
-	if err := c.repo.UpdateProcessingStatus(ctx, avatarID, domain.ProcessingInProgress); err != nil {
-		log.Printf("failed to update processing status for %s: %v", event.AvatarID, err)
+		log.Printf("failed to claim avatar %s: %v", event.AvatarID, err)
 		c.retryOrDLQ(ctx, ch, msg, event.AvatarID)
 		return
 	}

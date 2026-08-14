@@ -89,10 +89,13 @@ func (s *AvatarService) UploadAvatar(ctx context.Context, userID string, file mu
 		return nil, fmt.Errorf("create avatar record: %w", err)
 	}
 
+	idKey := avatar.ID.String() + ":" + s3Key
+
 	err = s.rmq.PublishUploadEvent(ctx, map[string]any{
-		"avatar_id": avatar.ID.String(),
-		"user_id":   avatar.UserID,
-		"s3_key":    s3Key,
+		"avatar_id":      avatar.ID.String(),
+		"user_id":        avatar.UserID,
+		"s3_key":         s3Key,
+		"idempotency_key": idKey,
 	})
 	if err != nil {
 		s.cleanupUpload(ctx, s3Key, avatarID)

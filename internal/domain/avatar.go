@@ -19,6 +19,7 @@ type Avatar struct {
 	ThumbnailS3Keys  JSONMap    `db:"thumbnail_s3_keys" json:"thumbnail_s3_keys,omitempty"`
 	UploadStatus     string     `db:"upload_status" json:"upload_status"`
 	ProcessingStatus string     `db:"processing_status" json:"processing_status"`
+	IdempotencyKey   *string    `db:"idempotency_key" json:"-"`
 	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at" json:"updated_at"`
 	DeletedAt        *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`

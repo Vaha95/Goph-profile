@@ -19,9 +19,10 @@ type MockAvatarRepository struct {
 	UpdateUploadFunc                  func(ctx context.Context, id uuid.UUID, status string) error
 	UpdateThumbnailFunc               func(ctx context.Context, id uuid.UUID, keys map[string]string) error
 	SoftDeleteFunc                    func(ctx context.Context, id uuid.UUID) error
-	SoftDeleteByUserFunc              func(ctx context.Context, userID string) error
+	SoftDeleteLatestByUserFunc        func(ctx context.Context, userID string) error
 	SoftDeleteOwnedFunc               func(ctx context.Context, id uuid.UUID, userID string) error
 	SoftDeleteLatestOwnedByUserIDFunc func(ctx context.Context, userID string) error
+	ClaimProcessingFunc               func(ctx context.Context, id uuid.UUID, idempotencyKey string) error
 	GetDeletedInfoFunc                func(ctx context.Context, id uuid.UUID) (*domain.Avatar, error)
 }
 
@@ -49,8 +50,8 @@ func (m *MockAvatarRepository) UpdateThumbnailKeys(ctx context.Context, id uuid.
 func (m *MockAvatarRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	return m.SoftDeleteFunc(ctx, id)
 }
-func (m *MockAvatarRepository) SoftDeleteByUserID(ctx context.Context, userID string) error {
-	return m.SoftDeleteByUserFunc(ctx, userID)
+func (m *MockAvatarRepository) SoftDeleteLatestByUserID(ctx context.Context, userID string) error {
+	return m.SoftDeleteLatestByUserFunc(ctx, userID)
 }
 func (m *MockAvatarRepository) SoftDeleteLatestOwnedByUserID(ctx context.Context, userID string) error {
 	return m.SoftDeleteLatestOwnedByUserIDFunc(ctx, userID)
@@ -60,6 +61,9 @@ func (m *MockAvatarRepository) SoftDeleteOwned(ctx context.Context, id uuid.UUID
 }
 func (m *MockAvatarRepository) GetDeletedInfo(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {
 	return m.GetDeletedInfoFunc(ctx, id)
+}
+func (m *MockAvatarRepository) ClaimProcessing(ctx context.Context, id uuid.UUID, idempotencyKey string) error {
+	return m.ClaimProcessingFunc(ctx, id, idempotencyKey)
 }
 
 // MockS3Service implements services.S3Service for unit tests.

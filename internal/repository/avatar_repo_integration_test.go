@@ -65,12 +65,17 @@ func TestAvatarRepository_PostgresRoundTrip(t *testing.T) {
 	db := sqlx.MustConnect("postgres", dsn)
 	defer db.Close()
 
-	migSQL, err := os.ReadFile("../../migrations/001_create_avatars.up.sql")
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, string(migSQL)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	for _, mig := range []string{
+		"../../migrations/001_create_avatars.up.sql",
+		"../../migrations/002_add_idempotency_key.up.sql",
+	} {
+		sql, err := os.ReadFile(mig)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", mig, err)
+		}
+		if _, err := db.ExecContext(ctx, string(sql)); err != nil {
+			t.Fatalf("apply migration %s: %v", mig, err)
+		}
 	}
 
 	repo := NewAvatarRepository(db)
