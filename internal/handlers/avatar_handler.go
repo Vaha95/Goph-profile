@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -159,8 +160,14 @@ func (h *AvatarHandler) GetMetadata(c echo.Context) error {
 		URL  string `json:"url"`
 	}
 
-	var thumbnails []thumbnailInfo
+	sizes := make([]string, 0, len(avatar.ThumbnailS3Keys))
 	for size := range avatar.ThumbnailS3Keys {
+		sizes = append(sizes, size)
+	}
+	sort.Strings(sizes)
+
+	thumbnails := make([]thumbnailInfo, 0, len(sizes))
+	for _, size := range sizes {
 		thumbnails = append(thumbnails, thumbnailInfo{
 			Size: size,
 			URL:  fmt.Sprintf("/api/v1/avatars/%s?size=%s", avatar.ID, size),
