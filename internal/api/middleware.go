@@ -35,7 +35,18 @@ func RequireUserID(next echo.HandlerFunc) echo.HandlerFunc {
 }
 
 func BodyLimit(maxSize int64) echo.MiddlewareFunc {
-	return middleware.BodyLimit(fmt.Sprintf("%d", maxSize))
+	var suffix string
+	switch {
+	case maxSize >= 1024*1024*1024:
+		suffix = fmt.Sprintf("%dGB", maxSize/(1024*1024*1024))
+	case maxSize >= 1024*1024:
+		suffix = fmt.Sprintf("%dMB", maxSize/(1024*1024))
+	case maxSize >= 1024:
+		suffix = fmt.Sprintf("%dKB", maxSize/1024)
+	default:
+		suffix = fmt.Sprintf("%dB", maxSize)
+	}
+	return middleware.BodyLimit(suffix)
 }
 
 func CORSConfig(origins string) echo.MiddlewareFunc {

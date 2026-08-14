@@ -85,9 +85,7 @@ func (s *AvatarService) UploadAvatar(ctx context.Context, userID string, file mu
 
 	err = s.repo.Create(ctx, avatar)
 	if err != nil {
-		if derr := s.s3.Delete(ctx, []string{s3Key}); derr != nil {
-			log.Printf("failed to rollback s3 upload for %s: %v", s3Key, derr)
-		}
+		s.cleanupUpload(ctx, s3Key, avatarID)
 		return nil, fmt.Errorf("create avatar record: %w", err)
 	}
 
@@ -97,16 +95,23 @@ func (s *AvatarService) UploadAvatar(ctx context.Context, userID string, file mu
 		"s3_key":    s3Key,
 	})
 	if err != nil {
-		if rerr := s.repo.SoftDelete(ctx, avatarID); rerr != nil {
-			log.Printf("failed to rollback avatar record %s: %v", avatarID, rerr)
-		}
-		if derr := s.s3.Delete(ctx, []string{s3Key}); derr != nil {
-			log.Printf("failed to rollback s3 upload for %s: %v", s3Key, derr)
-		}
+		s.cleanupUpload(ctx, s3Key, avatarID)
 		return nil, fmt.Errorf("publish upload event: %w", err)
 	}
 
 	return avatar, nil
+}
+
+// cleanupUpload rolls back side effects of a failed UploadAvatar call:
+// removes the DB record and deletes the S3 object.
+// Errors are logged but never returned — the caller always wants the root cause.
+func (s *AvatarService) cleanupUpload(ctx context.Context, s3Key string, avatarID uuid.UUID) {
+	if rerr := s.repo.SoftDelete(ctx, avatarID); rerr != nil {
+		log.Printf("failed to rollback avatar record %s: %v", avatarID, rerr)
+	}
+	if derr := s.s3.Delete(ctx, []string{s3Key}); derr != nil {
+		log.Printf("failed to delete s3 object %s: %v", s3Key, derr)
+	}
 }
 
 func (s *AvatarService) GetAvatar(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {

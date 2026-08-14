@@ -22,6 +22,7 @@ const (
 	bindingKey        = "avatar.uploaded"
 	retryCountHeader  = "x-retry-count"
 	maxMessageRetries = 5
+	baseRetryDelay    = 10 * time.Second
 	maxImageDimension = 10000
 )
 
@@ -165,6 +166,18 @@ func (c *Consumer) connect(ctx context.Context) (*amqp.Connection, *amqp.Channel
 	if err := ch.QueueBind(q.Name, bindingKey, c.exchange, false, nil); err != nil {
 		closeAll()
 		return nil, nil, fmt.Errorf("queue bind: %w", err)
+	}
+
+	// Retry queue: messages expire after a TTL (set per-message on Publish) and
+	// dead-letter back to the main exchange, re-entering the main queue.
+	retryQueue := c.queue + ".retry"
+	retryQueueArgs := amqp.Table{
+		"x-dead-letter-exchange":   c.exchange,
+		"x-dead-letter-routing-key": bindingKey,
+	}
+	if _, err := ch.QueueDeclare(retryQueue, true, false, false, false, retryQueueArgs); err != nil {
+		closeAll()
+		return nil, nil, fmt.Errorf("retry queue declare: %w", err)
 	}
 
 	if err := ch.Qos(1, 0, false); err != nil {
@@ -321,8 +334,9 @@ func (c *Consumer) failAndAck(ctx context.Context, avatarID uuid.UUID, msg amqp.
 	msg.Ack(false)
 }
 
-// retryOrDLQ re-queues the message with a bounded retry counter and backoff.
-// Once the counter is exhausted the message is rejected and routed to the DLQ.
+// retryOrDLQ re-queues the message with a bounded retry counter and exponential
+// backoff via the retry queue TTL. Once the counter is exhausted the message
+// is rejected and routed to the DLQ.
 func (c *Consumer) retryOrDLQ(ctx context.Context, ch *amqp.Channel, msg amqp.Delivery, avatarID string) {
 	retries := retryCount(msg)
 	if retries >= maxMessageRetries {
@@ -331,28 +345,25 @@ func (c *Consumer) retryOrDLQ(ctx context.Context, ch *amqp.Channel, msg amqp.De
 		return
 	}
 
-	if !sleepOrCancel(ctx, time.Duration(retries+1)*time.Second) {
-		msg.Nack(false, true)
-		return
-	}
-
+	retries++
 	headers := msg.Headers
 	if headers == nil {
 		headers = amqp.Table{}
 	}
-	headers[retryCountHeader] = int32(retries + 1)
+	headers[retryCountHeader] = int32(retries)
 
-	// Re-publish with an incremented retry counter and ack the original, so
-	// the retry count survives across redeliveries.
-	err := ch.Publish(c.exchange, bindingKey, false, false, amqp.Publishing{
+	delay := baseRetryDelay * time.Duration(1<<uint(retries-1))
+
+	err := ch.PublishWithContext(ctx, "", c.queue+".retry", false, false, amqp.Publishing{
 		ContentType:  msg.ContentType,
 		Body:         msg.Body,
 		Headers:      headers,
 		DeliveryMode: msg.DeliveryMode,
 		Timestamp:    time.Now(),
+		Expiration:   fmt.Sprintf("%d", delay.Milliseconds()),
 	})
 	if err != nil {
-		log.Printf("failed to re-publish retry for avatar %s, moving to DLQ: %v", avatarID, err)
+		log.Printf("failed to publish retry for avatar %s, moving to DLQ: %v", avatarID, err)
 		msg.Nack(false, false)
 		return
 	}

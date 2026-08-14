@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/gophprofile/avatars-service/internal/config"
@@ -60,9 +61,11 @@ func main() {
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		err := consumer.Start(ctx)
 		if err != nil {
 			log.Printf("worker error: %v", err)
@@ -75,5 +78,6 @@ func main() {
 
 	log.Println("shutting down worker...")
 	cancel()
+	wg.Wait()
 	log.Println("worker exited properly")
 }
