@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -46,15 +49,6 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    services:
-      docker:
-        image: docker:27-dind
-        options: >-
-          --privileged
-          --health-cmd "docker info"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v6
 

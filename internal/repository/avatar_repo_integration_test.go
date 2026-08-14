@@ -14,8 +14,8 @@ import (
 	"github.com/gophprofile/avatars-service/internal/domain"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
