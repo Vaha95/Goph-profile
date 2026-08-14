@@ -83,7 +83,7 @@ export S3_SECRET_KEY=minioadmin
 export CORS_ALLOWED_ORIGINS="http://localhost:3000"
 ```
 
-Остальные настройки подхватятся из дефолтных значений (`localhost:5432`, `localhost:9000`, `amqp://guest:guest@localhost:5672`).
+Остальные настройки подхватятся из дефолтных значений (`localhost:5435`, `localhost:9000`, `amqp://guest:guest@localhost:5672`).
 
 3. Запустить сервер и воркер:
 
@@ -103,7 +103,7 @@ go run ./cmd/worker &
 | `SERVER_HOST`          | `0.0.0.0`                        | Хост HTTP-сервера            |
 | `SERVER_PORT`          | `8080`                           | Порт HTTP-сервера            |
 | `DB_HOST`              | `localhost`                      | Хост PostgreSQL              |
-| `DB_PORT`              | `5432`                           | Порт PostgreSQL              |
+| `DB_PORT`              | `5435`                           | Порт PostgreSQL              |
 | `DB_NAME`              | `avatars`                        | Имя базы данных              |
 | `DB_USER`              | `postgres`                       | Пользователь БД              |
 | `DB_PASSWORD`          | `postgres`                       | Пароль БД                    |

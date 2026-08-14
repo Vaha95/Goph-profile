@@ -38,8 +38,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.DBHost != "localhost" {
 		t.Errorf("expected localhost, got %s", cfg.DBHost)
 	}
-	if cfg.DBPort != 5432 {
-		t.Errorf("expected 5432, got %d", cfg.DBPort)
+	if cfg.DBPort != 5435 {
+		t.Errorf("expected 5435, got %d", cfg.DBPort)
 	}
 	if cfg.MaxUploadSize != 10*1024*1024 {
 		t.Errorf("expected 10MB, got %d", cfg.MaxUploadSize)

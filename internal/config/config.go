@@ -39,7 +39,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SERVER_PORT: %w", err)
 	}
-	dbPort, err := getEnvIntOrErr("DB_PORT", 5432)
+	dbPort, err := getEnvIntOrErr("DB_PORT", 5435)
 	if err != nil {
 		return nil, fmt.Errorf("DB_PORT: %w", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -38,8 +39,8 @@ func TestAvatarRepository_PostgresRoundTrip(t *testing.T) {
 			"POSTGRES_PASSWORD": "postgres",
 			"POSTGRES_DB":       "avatars",
 		},
-		ExposedPorts: []string{"5432/tcp"},
-		WaitingFor: wait.ForSQL("5432/tcp", "postgres", func(host string, port nat.Port) string {
+		ExposedPorts: []string{"5435/tcp"},
+		WaitingFor: wait.ForSQL("5435/tcp", "postgres", func(host string, port network.Port) string {
 			return fmt.Sprintf("postgres://postgres:postgres@%s:%s/avatars?sslmode=disable", host, port.Port())
 		}).WithStartupTimeout(60 * time.Second),
 	}
@@ -56,7 +57,7 @@ func TestAvatarRepository_PostgresRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("container host: %v", err)
 	}
-	port, err := container.MappedPort(ctx, "5432")
+	port, err := container.MappedPort(ctx, "5435")
 	if err != nil {
 		t.Fatalf("container port: %v", err)
 	}
