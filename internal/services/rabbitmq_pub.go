@@ -15,6 +15,7 @@ const RoutingKeyUpload = "avatar.uploaded"
 type RabbitMQPublisher interface {
 	PublishUploadEvent(ctx context.Context, event map[string]any) error
 	Close() error
+	IsConnected() bool
 }
 
 type rabbitMQPublisher struct {

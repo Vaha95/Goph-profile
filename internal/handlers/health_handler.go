@@ -47,14 +47,10 @@ func (h *HealthHandler) Check(c echo.Context) error {
 
 	go func() {
 		defer wg.Done()
-		if rmq, ok := h.rmq.(interface{ IsConnected() bool }); ok {
-			if rmq.IsConnected() {
-				results <- result{Name: "rabbitmq", Status: "ok"}
-			} else {
-				results <- result{Name: "rabbitmq", Status: "error"}
-			}
-		} else {
+		if h.rmq.IsConnected() {
 			results <- result{Name: "rabbitmq", Status: "ok"}
+		} else {
+			results <- result{Name: "rabbitmq", Status: "error"}
 		}
 	}()
 
