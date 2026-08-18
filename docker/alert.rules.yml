@@ -1,0 +1,69 @@
+groups:
+  - name: avatar-service
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(avatars_uploads_total{status="error"}[5m])) by (job)
+            /
+            sum(rate(avatars_uploads_total[5m])) by (job)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High upload error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, sum(rate(avatars_upload_duration_seconds_bucket[5m])) by (le, job)) > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High response time on {{ $labels.job }}"
+          description: "P95 response time is {{ $value }}s (threshold: 5s)"
+
+      - alert: HighErrorRate_5xx
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{http_status_code=~"5.."}[5m])) by (job)
+          /
+          sum(rate(http_server_request_duration_seconds_count[5m])) by (job)
+          > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.job }}"
+          description: "5xx error rate is {{ $value | humanizePercentage }}"
+
+      - alert: HighResponseTime_P99
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, job)) > 10
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "P99 response time exceeded on {{ $labels.job }}"
+          description: "P99 is {{ $value }}s"
+
+      - alert: LowUploadRate
+        expr: |
+          sum(rate(avatars_uploads_total{status="success"}[15m])) by (job) < 0.001
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Low upload rate on {{ $labels.job }}"
+          description: "Upload rate is nearly zero for 10 minutes"
+
+      - alert: HighDBQueryDuration
+        expr: |
+          histogram_quantile(0.95, sum(rate(avatars_db_query_duration_seconds_bucket[5m])) by (le, job)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow DB queries on {{ $labels.job }}"
+          description: "P95 DB query duration is {{ $value }}s"

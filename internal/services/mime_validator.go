@@ -46,6 +46,8 @@ func (v *mimeValidator) Validate(reader io.Reader, maxSize int64) (string, int64
 
 	// Count the remaining bytes without buffering them in memory, so the
 	// caller can stream the file directly to S3 afterwards.
+	// NOTE: This reads to end of stream, so the caller must provide an
+	// io.ReadSeeker and call Seek(0, io.SeekStart) before streaming to S3.
 	counted, err := io.Copy(io.Discard, reader)
 	if err != nil {
 		return "", 0, fmt.Errorf("read file: %w", err)

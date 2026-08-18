@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -14,6 +14,7 @@ import (
 	"github.com/gophprofile/avatars-service/internal/services"
 	"github.com/labstack/echo/v4"
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
 
 type Router struct {
@@ -31,8 +32,6 @@ func NewRouter(
 	e.HideBanner = true
 	e.HidePort = true
 
-	// Unified error format for all routes (middleware, handlers, body limit, etc.):
-	// {"error": "..."} instead of echo's default {"message": "..."}.
 	e.HTTPErrorHandler = func(err error, c echo.Context) {
 		if c.Response().Committed {
 			return
@@ -50,7 +49,7 @@ func NewRouter(
 	}
 
 	e.Use(echoMiddleware.Recover())
-	e.Use(echoMiddleware.Logger())
+	e.Use(otelecho.Middleware(cfg.OTelServiceName))
 	e.Use(CORSConfig(cfg.CORSAllowedOrigins))
 	e.Use(NewRateLimiter(200))
 
@@ -85,7 +84,7 @@ func NewRouter(
 
 func (r *Router) Start(cfg *config.Config) error {
 	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort)
-	log.Printf("server starting on %s", addr)
+	slog.Info("server starting", "addr", addr)
 
 	r.echo.Server.Addr = addr
 	r.echo.Server.ReadTimeout = 30 * time.Second

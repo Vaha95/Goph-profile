@@ -16,6 +16,10 @@ import (
 
 func RequireUserID(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
+		// SECURITY: X-User-ID is trusted but fully spoofable from the client.
+		// This service MUST be deployed behind an API gateway / auth proxy that
+		// validates the user's identity and rewrites X-User-ID accordingly.
+		// Never expose this service directly to the internet without such a gateway.
 		userID := c.Request().Header.Get("X-User-ID")
 		if userID == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "X-User-ID header is required")
