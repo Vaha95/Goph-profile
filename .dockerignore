@@ -1,0 +1,11 @@
+.git
+.claude
+node_modules
+*.md
+!.markdownlint.yaml
+__pycache__
+*.out
+*.log
+.env
+.env.*
+coverage/

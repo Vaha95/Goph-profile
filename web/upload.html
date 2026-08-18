@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Avatar</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Upload Avatar</h1>
+
+        <div class="error-banner" id="errorBanner" style="display:none"></div>
+
+        <div class="upload-form">
+            <label for="userIdInput">User ID</label>
+            <input type="text" id="userIdInput" placeholder="e.g. user_123" autocomplete="off">
+
+            <label for="fileInput">Image file (JPEG, PNG, WebP, max 10 MB)</label>
+            <div class="drop-zone" id="dropZone">
+                <p>Drag &amp; drop an image here</p>
+                <p class="or">or</p>
+                <label class="btn btn-primary">Browse files<input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" hidden></label>
+            </div>
+
+            <div class="preview" id="preview" style="display:none">
+                <img id="previewImage" alt="Preview">
+                <div class="preview-info" id="previewInfo"></div>
+                <button class="btn btn-danger" id="clearBtn" type="button">Clear</button>
+            </div>
+
+            <button class="btn btn-primary" id="uploadBtn" type="button" disabled>Upload</button>
+            <div class="progress" id="progress" style="display:none">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/upload.js"></script>
+</body>
+</html>
