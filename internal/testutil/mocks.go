@@ -4,9 +4,10 @@ import (
 	"context"
 	"io"
 
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/gophprofile/avatars-service/internal/domain"
-	"time"
 )
 
 // MockAvatarRepository implements repository.AvatarRepository for unit tests.

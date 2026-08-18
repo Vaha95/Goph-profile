@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 
+	"strconv"
+
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -16,7 +18,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
-	"strconv"
 )
 
 type ShutdownFunc func(ctx context.Context) error
