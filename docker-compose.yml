@@ -31,7 +31,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
     container_name: avatars_minio
     restart: unless-stopped
     command: server /data --console-address :9001
@@ -122,7 +122,7 @@ services:
       LOG_LEVEL: info
 
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:latest
+    image: prometheuscommunity/postgres-exporter:v0.20.1
     container_name: avatars_postgres_exporter
     restart: unless-stopped
     environment:
@@ -134,7 +134,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     container_name: avatars_prometheus
     restart: unless-stopped
     command:
@@ -150,7 +150,7 @@ services:
       - prometheus-data:/prometheus
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:2.20.0
     container_name: avatars_jaeger
     restart: unless-stopped
     environment:
@@ -161,7 +161,7 @@ services:
       - "4317:4317"
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.0
     container_name: avatars_grafana
     restart: unless-stopped
     environment:
@@ -176,7 +176,7 @@ services:
       - grafana-data:/var/lib/grafana
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.6
     container_name: avatars_loki
     restart: unless-stopped
     ports:
@@ -185,7 +185,7 @@ services:
       - loki-data:/loki
 
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.11
     container_name: avatars_promtail
     restart: unless-stopped
     volumes:

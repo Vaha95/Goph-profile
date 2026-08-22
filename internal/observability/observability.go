@@ -20,15 +20,18 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Version is injected at build time via -ldflags="-X …". Empty string means dev build.
+var Version string
+
 type ShutdownFunc func(ctx context.Context) error
 
-func Init(serviceName, otelEndpoint string, metricsPort int) (ShutdownFunc, error) {
+func Init(serviceName, otelEndpoint string) (ShutdownFunc, error) {
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceNameKey.String(serviceName),
-			semconv.ServiceVersionKey.String("1.0.0"),
+			semconv.ServiceVersionKey.String(Version),
 		),
 	)
 	if err != nil {
@@ -66,14 +69,16 @@ func Init(serviceName, otelEndpoint string, metricsPort int) (ShutdownFunc, erro
 }
 
 func initTracerProvider(res *resource.Resource, endpoint string) (*sdktrace.TracerProvider, error) {
-	opts := []otlptracehttp.Option{}
-
-	if endpoint != "" {
-		opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
-		opts = append(opts, otlptracehttp.WithInsecure())
+	if endpoint == "" {
+		slog.Info("no OTLP endpoint — using noop tracer provider")
+		tp := sdktrace.NewTracerProvider(sdktrace.WithResource(res))
+		return tp, nil
 	}
 
-	exporter, err := otlptracehttp.New(context.Background(), opts...)
+	exporter, err := otlptracehttp.New(context.Background(),
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithInsecure(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}

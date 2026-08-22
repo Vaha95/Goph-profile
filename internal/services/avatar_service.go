@@ -55,7 +55,7 @@ func NewAvatarService(
 }
 
 func (s *AvatarService) UploadAvatar(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error) {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "UploadAvatar",
 		trace.WithAttributes(
 			attribute.String("user_id", userID),
@@ -162,7 +162,7 @@ func (s *AvatarService) cleanupUpload(ctx context.Context, s3Key string, avatarI
 }
 
 func (s *AvatarService) GetAvatar(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "GetAvatar",
 		trace.WithAttributes(attribute.String("avatar_id", id.String())),
 	)
@@ -177,7 +177,7 @@ func (s *AvatarService) GetAvatar(ctx context.Context, id uuid.UUID) (*domain.Av
 }
 
 func (s *AvatarService) GetAvatarImage(ctx context.Context, id uuid.UUID, opts ImageOptions) (io.ReadCloser, string, error) {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "GetAvatarImage",
 		trace.WithAttributes(
 			attribute.String("avatar_id", id.String()),
@@ -196,7 +196,7 @@ func (s *AvatarService) GetAvatarImage(ctx context.Context, id uuid.UUID, opts I
 }
 
 func (s *AvatarService) GetAvatarImageWithAvatar(ctx context.Context, avatar *domain.Avatar, opts ImageOptions) (io.ReadCloser, string, error) {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "GetAvatarImageWithAvatar",
 		trace.WithAttributes(
 			attribute.String("avatar_id", avatar.ID.String()),
@@ -229,7 +229,7 @@ func (s *AvatarService) resolveAvatarImage(ctx context.Context, avatar *domain.A
 }
 
 func (s *AvatarService) DeleteAvatar(ctx context.Context, id uuid.UUID, owner string) error {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "DeleteAvatar",
 		trace.WithAttributes(
 			attribute.String("avatar_id", id.String()),
@@ -274,7 +274,7 @@ func (s *AvatarService) DeleteAvatar(ctx context.Context, id uuid.UUID, owner st
 }
 
 func (s *AvatarService) DeleteLatestAvatarByUser(ctx context.Context, userID string, requester string) error {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "DeleteLatestAvatarByUser",
 		trace.WithAttributes(
 			attribute.String("user_id", userID),
@@ -315,7 +315,7 @@ func (s *AvatarService) DeleteLatestAvatarByUser(ctx context.Context, userID str
 }
 
 func (s *AvatarService) GetLatestAvatarByUser(ctx context.Context, userID string) (*domain.Avatar, error) {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "GetLatestAvatarByUser",
 		trace.WithAttributes(attribute.String("user_id", userID)),
 	)
@@ -330,7 +330,7 @@ func (s *AvatarService) GetLatestAvatarByUser(ctx context.Context, userID string
 }
 
 func (s *AvatarService) ListAvatarsByUser(ctx context.Context, userID string, limit, offset int) ([]*domain.Avatar, error) {
-	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("avatar-service")
+	tracer := otel.Tracer("avatar-service")
 	ctx, span := tracer.Start(ctx, "ListAvatarsByUser",
 		trace.WithAttributes(
 			attribute.String("user_id", userID),

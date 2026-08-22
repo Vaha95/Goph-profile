@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gophprofile/avatars-service/internal/domain"
+	"github.com/gophprofile/avatars-service/internal/observability"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -164,4 +165,30 @@ func isValidUserID(id string) bool {
 
 func isValidUserIDChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_'
+}
+
+// AccessLogger logs each completed HTTP request with method, path, status, and latency.
+// The logger automatically includes trace_id and span_id from the request context
+// for correlation with the OTel span created by otelecho.Middleware.
+func AccessLogger(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		start := time.Now()
+
+		err := next(c)
+
+		duration := time.Since(start)
+		req := c.Request()
+		res := c.Response()
+
+		observability.L(req.Context()).Info("request",
+			"method", req.Method,
+			"path", req.URL.Path,
+			"status", res.Status,
+			"latency", duration.String(),
+			"remote_addr", extractIP(req),
+			"bytes", res.Size,
+		)
+
+		return err
+	}
 }

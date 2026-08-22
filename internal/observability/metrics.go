@@ -112,6 +112,9 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 }
 
 func RecordUpload(ctx context.Context, m *Metrics, status string, userID string, sizeBytes int64) {
+	if m == nil {
+		return
+	}
 	m.UploadsTotal.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("status", status),
 		attribute.String("user_id", userID),
@@ -122,6 +125,9 @@ func RecordUpload(ctx context.Context, m *Metrics, status string, userID string,
 }
 
 func RecordDBQuery(ctx context.Context, m *Metrics, operation string, duration float64, err bool) {
+	if m == nil {
+		return
+	}
 	m.DBQueryDuration.Record(ctx, duration, metric.WithAttributes(
 		attribute.String("operation", operation),
 		attribute.Bool("error", err),
@@ -129,6 +135,9 @@ func RecordDBQuery(ctx context.Context, m *Metrics, operation string, duration f
 }
 
 func RecordS3Operation(ctx context.Context, m *Metrics, operation string, duration float64, err bool) {
+	if m == nil {
+		return
+	}
 	m.S3OperationDuration.Record(ctx, duration, metric.WithAttributes(
 		attribute.String("operation", operation),
 		attribute.Bool("error", err),
@@ -136,6 +145,9 @@ func RecordS3Operation(ctx context.Context, m *Metrics, operation string, durati
 }
 
 func RecordRMQPublish(ctx context.Context, m *Metrics, routingKey string, duration float64, err bool) {
+	if m == nil {
+		return
+	}
 	m.RMQPublishDuration.Record(ctx, duration, metric.WithAttributes(
 		attribute.String("routing_key", routingKey),
 		attribute.Bool("error", err),
@@ -143,6 +155,9 @@ func RecordRMQPublish(ctx context.Context, m *Metrics, routingKey string, durati
 }
 
 func RecordRMQConsume(ctx context.Context, m *Metrics, status string, duration float64) {
+	if m == nil {
+		return
+	}
 	m.RMQConsumeDuration.Record(ctx, duration, metric.WithAttributes(
 		attribute.String("status", status),
 	))

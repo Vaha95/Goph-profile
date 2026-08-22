@@ -30,7 +30,7 @@ func main() {
 
 	logger := observability.InitLogger(cfg.OTelServiceName+"-worker", cfg.LogLevel)
 
-	obsShutdown, err := observability.Init(cfg.OTelServiceName+"-worker", cfg.OTelExporterAddr, cfg.MetricsPort)
+	obsShutdown, err := observability.Init(cfg.OTelServiceName+"-worker", cfg.OTelExporterAddr)
 	if err != nil {
 		logger.Error("init observability", "error", err)
 		os.Exit(1)

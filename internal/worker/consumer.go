@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -70,7 +69,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 		conn, ch, err := c.connect(ctx)
 		if err != nil {
-			slog.ErrorContext(ctx, "RabbitMQ setup failed, retrying...", "error", err)
+			observability.L(ctx).Error("RabbitMQ setup failed, retrying...", "error", err)
 			if !sleepOrCancel(ctx, 5*time.Second) {
 				return ctx.Err()
 			}
@@ -89,7 +88,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		if err != nil {
 			ch.Close()
 			conn.Close()
-			slog.ErrorContext(ctx, "consume failed, retrying...", "error", err)
+			observability.L(ctx).Error("consume failed, retrying...", "error", err)
 			if !sleepOrCancel(ctx, 5*time.Second) {
 				return ctx.Err()
 			}
@@ -100,7 +99,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		c.connected = true
 		c.mu.Unlock()
 
-		slog.InfoContext(ctx, "worker started, consuming from queue", "queue", c.queue)
+		observability.L(ctx).Info("worker started, consuming from queue", "queue", c.queue)
 
 		notifyClose := conn.NotifyClose(make(chan *amqp.Error, 1))
 		go c.handleMessages(ctx, ch, msgs)
@@ -111,7 +110,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 			conn.Close()
 			return ctx.Err()
 		case connErr := <-notifyClose:
-			slog.WarnContext(ctx, "RabbitMQ connection lost, reconnecting...", "error", connErr)
+			observability.L(ctx).Warn("RabbitMQ connection lost, reconnecting...", "error", connErr)
 			ch.Close()
 			conn.Close()
 			c.mu.Lock()
