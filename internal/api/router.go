@@ -13,7 +13,8 @@ import (
 	"github.com/gophprofile/avatars-service/internal/handlers"
 	"github.com/gophprofile/avatars-service/internal/services"
 	"github.com/labstack/echo/v4"
-	echoMiddleware "github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v4/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
 
 type Router struct {
@@ -47,8 +48,8 @@ func NewRouter(
 		_ = c.JSON(code, map[string]string{"error": message})
 	}
 
-	e.Use(echoMiddleware.Recover())
-	e.Use(echoMiddleware.RequestLogger())
+	e.Use(middleware.Recover())
+	e.Use(otelecho.Middleware(cfg.OTelServiceName))
 	e.Use(AccessLogger)
 	e.Use(CORSConfig(cfg.CORSAllowedOrigins))
 	e.Use(NewRateLimiter(200))
