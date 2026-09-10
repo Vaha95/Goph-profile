@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 )
@@ -32,6 +33,11 @@ type Config struct {
 
 	CORSAllowedOrigins string
 	DBSSLMode          string
+
+	OTelServiceName  string
+	OTelExporterAddr string
+	MetricsPort      int
+	LogLevel         slog.Level
 }
 
 func Load() (*Config, error) {
@@ -39,7 +45,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SERVER_PORT: %w", err)
 	}
-	dbPort, err := getEnvIntOrErr("DB_PORT", 5435)
+	dbPort, err := getEnvIntOrErr("DB_PORT", 5432)
 	if err != nil {
 		return nil, fmt.Errorf("DB_PORT: %w", err)
 	}
@@ -57,6 +63,23 @@ func Load() (*Config, error) {
 	}
 	if corsOrigins == "*" {
 		return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS must be an explicit list, wildcard is not supported")
+	}
+
+	metricsPort, err := getEnvIntOrErr("METRICS_PORT", 9090)
+	if err != nil {
+		return nil, fmt.Errorf("METRICS_PORT: %w", err)
+	}
+
+	logLevel := slog.LevelInfo
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		switch v {
+		case "debug":
+			logLevel = slog.LevelDebug
+		case "warn":
+			logLevel = slog.LevelWarn
+		case "error":
+			logLevel = slog.LevelError
+		}
 	}
 
 	cfg := &Config{
@@ -80,6 +103,10 @@ func Load() (*Config, error) {
 		RMQQueue:           getEnv("RMQ_QUEUE", "avatars.processing"),
 		MaxUploadSize:      maxUploadSize,
 		CORSAllowedOrigins: corsOrigins,
+		OTelServiceName:    getEnv("OTEL_SERVICE_NAME", "avatars-service"),
+		OTelExporterAddr:   getEnv("OTEL_EXPORTER_ENDPOINT", ""),
+		MetricsPort:        metricsPort,
+		LogLevel:           logLevel,
 	}
 
 	if cfg.S3AccessKey == "" {

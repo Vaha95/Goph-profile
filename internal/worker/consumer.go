@@ -7,15 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gophprofile/avatars-service/internal/domain"
+	"github.com/gophprofile/avatars-service/internal/observability"
 	"github.com/gophprofile/avatars-service/internal/repository"
 	"github.com/gophprofile/avatars-service/internal/services"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -33,6 +35,7 @@ type Consumer struct {
 	s3        services.S3Service
 	repo      repository.AvatarRepository
 	thumb     Thumbnailer
+	metrics   *observability.Metrics
 	connected bool
 	mu        sync.Mutex
 }
@@ -44,6 +47,7 @@ type ConsumerConfig struct {
 }
 
 func NewConsumer(cfg ConsumerConfig, s3 services.S3Service, repo repository.AvatarRepository, thumb Thumbnailer) *Consumer {
+	m := observability.NewMetricsFromGlobal()
 	return &Consumer{
 		rmqURL:   cfg.RMQURL,
 		exchange: cfg.Exchange,
@@ -51,6 +55,7 @@ func NewConsumer(cfg ConsumerConfig, s3 services.S3Service, repo repository.Avat
 		s3:       s3,
 		repo:     repo,
 		thumb:    thumb,
+		metrics:  m,
 	}
 }
 
@@ -64,7 +69,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 		conn, ch, err := c.connect(ctx)
 		if err != nil {
-			log.Printf("rabbitmq setup failed: %v, retrying...", err)
+			observability.L(ctx).Error("RabbitMQ setup failed, retrying...", "error", err)
 			if !sleepOrCancel(ctx, 5*time.Second) {
 				return ctx.Err()
 			}
@@ -83,7 +88,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		if err != nil {
 			ch.Close()
 			conn.Close()
-			log.Printf("consume failed: %v, retrying...", err)
+			observability.L(ctx).Error("consume failed, retrying...", "error", err)
 			if !sleepOrCancel(ctx, 5*time.Second) {
 				return ctx.Err()
 			}
@@ -94,7 +99,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		c.connected = true
 		c.mu.Unlock()
 
-		log.Printf("worker started, consuming from queue %s", c.queue)
+		observability.L(ctx).Info("worker started, consuming from queue", "queue", c.queue)
 
 		notifyClose := conn.NotifyClose(make(chan *amqp.Error, 1))
 		go c.handleMessages(ctx, ch, msgs)
@@ -105,7 +110,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 			conn.Close()
 			return ctx.Err()
 		case connErr := <-notifyClose:
-			log.Printf("rabbitmq connection lost: %v, reconnecting...", connErr)
+			observability.L(ctx).Warn("RabbitMQ connection lost, reconnecting...", "error", connErr)
 			ch.Close()
 			conn.Close()
 			c.mu.Lock()
@@ -118,8 +123,6 @@ func (c *Consumer) Start(ctx context.Context) error {
 	}
 }
 
-// connect dials RabbitMQ and sets up the exchange, the main queue with a
-// dead-letter queue, binding and prefetch.
 func (c *Consumer) connect(ctx context.Context) (*amqp.Connection, *amqp.Channel, error) {
 	conn, err := amqp.Dial(c.rmqURL)
 	if err != nil {
@@ -145,8 +148,6 @@ func (c *Consumer) connect(ctx context.Context) (*amqp.Connection, *amqp.Channel
 		return nil, nil, fmt.Errorf("dlq declare: %w", err)
 	}
 
-	// Dead messages (unparsable, retries exhausted) are routed to the DLQ via
-	// the default exchange.
 	q, err := ch.QueueDeclare(
 		c.queue,
 		true,
@@ -168,11 +169,9 @@ func (c *Consumer) connect(ctx context.Context) (*amqp.Connection, *amqp.Channel
 		return nil, nil, fmt.Errorf("queue bind: %w", err)
 	}
 
-	// Retry queue: messages expire after a TTL (set per-message on Publish) and
-	// dead-letter back to the main exchange, re-entering the main queue.
 	retryQueue := c.queue + ".retry"
 	retryQueueArgs := amqp.Table{
-		"x-dead-letter-exchange":   c.exchange,
+		"x-dead-letter-exchange":    c.exchange,
 		"x-dead-letter-routing-key": bindingKey,
 	}
 	if _, err := ch.QueueDeclare(retryQueue, true, false, false, false, retryQueueArgs); err != nil {
@@ -212,6 +211,18 @@ func (c *Consumer) handleMessages(ctx context.Context, ch *amqp.Channel, msgs <-
 }
 
 func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amqp.Delivery) {
+	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("rmq-consumer")
+	ctx, span := tracer.Start(ctx, "rmq.consume.message",
+		trace.WithAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.destination", c.queue),
+			attribute.Int64("messaging.message.delivery_tag", int64(msg.DeliveryTag)),
+		),
+	)
+	defer span.End()
+
+	start := time.Now()
+
 	var event struct {
 		AvatarID       string `json:"avatar_id"`
 		UserID         string `json:"user_id"`
@@ -220,10 +231,18 @@ func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amq
 	}
 
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
-		log.Printf("failed to unmarshal event, moving to DLQ: %v", err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to unmarshal event, moving to DLQ", "error", err)
 		msg.Nack(false, false)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
+
+	span.SetAttributes(
+		attribute.String("avatar_id", event.AvatarID),
+		attribute.String("user_id", event.UserID),
+		attribute.String("s3_key", event.S3Key),
+	)
 
 	if event.IdempotencyKey == "" {
 		event.IdempotencyKey = event.AvatarID + ":" + event.S3Key
@@ -231,70 +250,91 @@ func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amq
 
 	avatarID, err := uuid.Parse(event.AvatarID)
 	if err != nil {
-		log.Printf("invalid avatar ID %q, moving to DLQ: %v", event.AvatarID, err)
+		span.RecordError(err)
+		observability.L(ctx).Error("invalid avatar ID, moving to DLQ", "avatar_id", event.AvatarID, "error", err)
 		msg.Nack(false, false)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
-	// Atomically claim this avatar for processing. If another consumer already
-	// claimed this idempotency key, the DB unique index will reject — we ack
-	// the duplicate and bail.
 	err = c.repo.ClaimProcessing(ctx, avatarID, event.IdempotencyKey)
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicateKey) {
-			log.Printf("avatar %s already claimed by another consumer, acking", event.AvatarID)
+			span.SetAttributes(attribute.Bool("duplicate", true))
+			observability.L(ctx).Info("avatar already claimed, acking", "avatar_id", event.AvatarID)
 			msg.Ack(false)
+			observability.RecordRMQConsume(ctx, c.metrics, "duplicate", time.Since(start).Seconds())
 			return
 		}
 		if errors.Is(err, repository.ErrNotFound) {
-			// Avatar was deleted or already processed — nothing to do.
-			log.Printf("avatar %s not found, dropping message", event.AvatarID)
+			span.SetAttributes(attribute.Bool("not_found", true))
+			observability.L(ctx).Info("avatar not found, dropping message", "avatar_id", event.AvatarID)
 			msg.Ack(false)
+			observability.RecordRMQConsume(ctx, c.metrics, "not_found", time.Since(start).Seconds())
 			return
 		}
-		log.Printf("failed to claim avatar %s: %v", event.AvatarID, err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to claim avatar", "avatar_id", event.AvatarID, "error", err)
 		c.retryOrDLQ(ctx, ch, msg, event.AvatarID)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
 	reader, err := c.s3.Download(ctx, event.S3Key)
 	if err != nil {
-		log.Printf("failed to download image: %v", err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to download image", "error", err)
 		c.failAndAck(ctx, avatarID, msg, nil)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 	defer reader.Close()
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		log.Printf("failed to read image data: %v", err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to read image data", "error", err)
 		c.failAndAck(ctx, avatarID, msg, nil)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
 	if err := CheckImageDimensions(data, maxImageDimension); err != nil {
-		log.Printf("image rejected before decode: %v", err)
+		span.RecordError(err)
+		observability.L(ctx).Error("image rejected before decode", "error", err)
 		c.failAndAck(ctx, avatarID, msg, nil)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
 	srcImg, _, err := DecodeImage(data)
 	if err != nil {
-		log.Printf("failed to decode image: %v", err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to decode image", "error", err)
 		c.failAndAck(ctx, avatarID, msg, nil)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
 	if srcImg.Bounds().Dx() > maxImageDimension || srcImg.Bounds().Dy() > maxImageDimension {
-		log.Printf("image too large %dx%d (max %d)", srcImg.Bounds().Dx(), srcImg.Bounds().Dy(), maxImageDimension)
+		err := fmt.Errorf("image too large %dx%d (max %d)", srcImg.Bounds().Dx(), srcImg.Bounds().Dy(), maxImageDimension)
+		span.RecordError(err)
+		observability.L(ctx).Error("image too large",
+			"width", srcImg.Bounds().Dx(),
+			"height", srcImg.Bounds().Dy(),
+			"max", maxImageDimension,
+		)
 		c.failAndAck(ctx, avatarID, msg, nil)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
 	thumbnails, err := c.thumb.Generate(ctx, srcImg, "image/jpeg", domain.DefaultThumbnailSizes)
 	if err != nil {
-		log.Printf("failed to generate thumbnails: %v", err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to generate thumbnails", "error", err)
 		c.failAndAck(ctx, avatarID, msg, nil)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
@@ -303,8 +343,10 @@ func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amq
 	for size, thumbData := range thumbnails {
 		key := fmt.Sprintf("%s/%s/%s.jpg", event.UserID, event.AvatarID, size)
 		if err := c.s3.Upload(ctx, key, bytes.NewReader(thumbData), int64(len(thumbData)), "image/jpeg"); err != nil {
-			log.Printf("failed to upload thumbnail %s: %v", size, err)
+			span.RecordError(err)
+			observability.L(ctx).Error("failed to upload thumbnail", "size", size, "error", err)
 			c.failAndAck(ctx, avatarID, msg, uploadedKeys)
+			observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 			return
 		}
 		uploadedKeys = append(uploadedKeys, key)
@@ -312,36 +354,44 @@ func (c *Consumer) processMessage(ctx context.Context, ch *amqp.Channel, msg amq
 	}
 
 	if err := c.repo.UpdateThumbnailKeys(ctx, avatarID, thumbnailKeys); err != nil {
-		log.Printf("failed to update thumbnail keys for %s: %v", event.AvatarID, err)
+		span.RecordError(err)
+		observability.L(ctx).Error("failed to update thumbnail keys", "avatar_id", event.AvatarID, "error", err)
 		c.retryOrDLQ(ctx, ch, msg, event.AvatarID)
+		observability.RecordRMQConsume(ctx, c.metrics, "error", time.Since(start).Seconds())
 		return
 	}
 
-	log.Printf("avatar %s processed successfully", event.AvatarID)
+	span.SetAttributes(
+		attribute.Int("thumbnails.count", len(thumbnails)),
+		attribute.Float64("processing.duration_ms", float64(time.Since(start).Milliseconds())),
+	)
+	observability.L(ctx).Info("avatar processed successfully", "avatar_id", event.AvatarID, "duration_ms", time.Since(start).Milliseconds())
 	msg.Ack(false)
+	observability.RecordRMQConsume(ctx, c.metrics, "success", time.Since(start).Seconds())
 }
 
-// failAndAck marks the avatar as failed, cleans up any partially uploaded
-// thumbnails and acks the message (the failure is terminal).
 func (c *Consumer) failAndAck(ctx context.Context, avatarID uuid.UUID, msg amqp.Delivery, uploadedKeys []string) {
 	if len(uploadedKeys) > 0 {
 		if err := c.s3.Delete(ctx, uploadedKeys); err != nil {
-			log.Printf("failed to clean up orphaned thumbnails for %s: %v", avatarID, err)
+			observability.L(ctx).Error("failed to clean up orphaned thumbnails", "avatar_id", avatarID, "error", err)
 		}
 	}
 	if err := c.repo.UpdateProcessingStatus(ctx, avatarID, domain.ProcessingFailed); err != nil {
-		log.Printf("failed to mark avatar %s as failed: %v", avatarID, err)
+		observability.L(ctx).Error("failed to mark avatar as failed", "avatar_id", avatarID, "error", err)
 	}
 	msg.Ack(false)
 }
 
-// retryOrDLQ re-queues the message with a bounded retry counter and exponential
-// backoff via the retry queue TTL. Once the counter is exhausted the message
-// is rejected and routed to the DLQ.
 func (c *Consumer) retryOrDLQ(ctx context.Context, ch *amqp.Channel, msg amqp.Delivery, avatarID string) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			observability.L(ctx).Error("panic in retryOrDLQ, sending to DLQ", "avatar_id", avatarID, "panic", rec)
+			msg.Nack(false, false)
+		}
+	}()
 	retries := retryCount(msg)
 	if retries >= maxMessageRetries {
-		log.Printf("retries exhausted for avatar %s, moving to DLQ", avatarID)
+		observability.L(ctx).Warn("retries exhausted, moving to DLQ", "avatar_id", avatarID)
 		msg.Nack(false, false)
 		return
 	}
@@ -364,7 +414,7 @@ func (c *Consumer) retryOrDLQ(ctx context.Context, ch *amqp.Channel, msg amqp.De
 		Expiration:   fmt.Sprintf("%d", delay.Milliseconds()),
 	})
 	if err != nil {
-		log.Printf("failed to publish retry for avatar %s, moving to DLQ: %v", avatarID, err)
+		observability.L(ctx).Error("failed to publish retry, moving to DLQ", "avatar_id", avatarID, "error", err)
 		msg.Nack(false, false)
 		return
 	}

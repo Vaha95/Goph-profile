@@ -199,17 +199,39 @@ func (h *AvatarHandler) ListByUser(c echo.Context) error {
 	offset := 0
 
 	if limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
-			if limit > 100 {
-				limit = 100
-			}
+		l, err := strconv.Atoi(limitStr)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, errorResponse{
+				Error:   "Invalid query parameter",
+				Details: "limit must be a positive integer",
+			})
+		}
+		if l <= 0 {
+			return c.JSON(http.StatusBadRequest, errorResponse{
+				Error:   "Invalid query parameter",
+				Details: "limit must be a positive integer",
+			})
+		}
+		limit = l
+		if limit > 100 {
+			limit = 100
 		}
 	}
 	if offsetStr != "" {
-		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
-			offset = o
+		o, err := strconv.Atoi(offsetStr)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, errorResponse{
+				Error:   "Invalid query parameter",
+				Details: "offset must be a non-negative integer",
+			})
 		}
+		if o < 0 {
+			return c.JSON(http.StatusBadRequest, errorResponse{
+				Error:   "Invalid query parameter",
+				Details: "offset must be a non-negative integer",
+			})
+		}
+		offset = o
 	}
 
 	avatars, err := h.svc.ListAvatarsByUser(c.Request().Context(), userID, limit, offset)

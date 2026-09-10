@@ -36,7 +36,7 @@ func (h *UserHandler) GetAvatar(c echo.Context) error {
 	}
 
 	opts := services.ImageOptions{Size: size}
-	reader, contentType, err := h.svc.GetAvatarImage(c.Request().Context(), avatar.ID, opts)
+	reader, contentType, err := h.svc.GetAvatarImageWithAvatar(c.Request().Context(), avatar, opts)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return c.JSON(http.StatusNotFound, errorResponse{Error: "No avatar found for user"})
@@ -47,7 +47,11 @@ func (h *UserHandler) GetAvatar(c echo.Context) error {
 
 	c.Response().Header().Set("Content-Type", contentType)
 	c.Response().Header().Set("Cache-Control", "max-age=86400")
-	c.Response().Header().Set("ETag", fmt.Sprintf("%q", avatar.ID.String()))
+	etagSize := size
+	if etagSize == "" {
+		etagSize = "original"
+	}
+	c.Response().Header().Set("ETag", fmt.Sprintf("%q", avatar.ID.String()+"-"+etagSize))
 	return c.Stream(http.StatusOK, contentType, reader)
 }
 

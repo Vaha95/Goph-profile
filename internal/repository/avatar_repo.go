@@ -9,8 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gophprofile/avatars-service/internal/domain"
+	"github.com/gophprofile/avatars-service/internal/observability"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ErrNotFound is returned when the requested avatar does not exist (or has been deleted).
@@ -36,14 +40,34 @@ type AvatarRepository interface {
 }
 
 type avatarRepo struct {
-	db *sqlx.DB
+	db      *sqlx.DB
+	metrics *observability.Metrics
 }
 
 func NewAvatarRepository(db *sqlx.DB) AvatarRepository {
-	return &avatarRepo{db: db}
+	m := observability.NewMetricsFromGlobal()
+	return &avatarRepo{db: db, metrics: m}
+}
+
+func (r *avatarRepo) createSpan(ctx context.Context, op string) (context.Context, trace.Span) {
+	return otel.Tracer("db-repository").Start(ctx, "repo.Avatar."+op,
+		trace.WithAttributes(attribute.String("db.operation", op)),
+	)
+}
+
+func (r *avatarRepo) recordQuery(ctx context.Context, op string, dur time.Duration, failed bool) {
+	if r.metrics != nil {
+		observability.RecordDBQuery(ctx, r.metrics, op, dur.Seconds(), failed)
+	}
 }
 
 func (r *avatarRepo) Create(ctx context.Context, avatar *domain.Avatar) error {
+	ctx, span := r.createSpan(ctx, "Create")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "Create", time.Since(start), failed) }()
+
 	query := `INSERT INTO avatars (id, user_id, file_name, mime_type, size_bytes, s3_key,
 		thumbnail_s3_keys, upload_status, processing_status, created_at, updated_at)
 		VALUES (:id, :user_id, :file_name, :mime_type, :size_bytes, :s3_key,
@@ -70,7 +94,13 @@ func (r *avatarRepo) Create(ctx context.Context, avatar *domain.Avatar) error {
 		"updated_at":        avatar.UpdatedAt,
 	}
 
+	span.SetAttributes(attribute.String("user_id", avatar.UserID))
+
 	_, err := r.db.NamedExecContext(ctx, query, args)
+	if err != nil {
+		failed = true
+		span.RecordError(err)
+	}
 	return err
 }
 
@@ -79,6 +109,14 @@ func (r *avatarRepo) Create(ctx context.Context, avatar *domain.Avatar) error {
 // Returns ErrDuplicateKey if another consumer already claimed (unique constraint violation).
 // Returns ErrNotFound if the avatar does not exist, is already complete, or has been claimed.
 func (r *avatarRepo) ClaimProcessing(ctx context.Context, id uuid.UUID, idempotencyKey string) error {
+	ctx, span := r.createSpan(ctx, "ClaimProcessing")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "ClaimProcessing", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("avatar_id", id.String()))
+
 	query := `UPDATE avatars
 		SET processing_status = $1, idempotency_key = $2
 		WHERE id = $3 AND idempotency_key IS NULL AND processing_status <> $4`
@@ -88,12 +126,16 @@ func (r *avatarRepo) ClaimProcessing(ctx context.Context, id uuid.UUID, idempote
 	)
 	if err != nil {
 		if isPostgresUniqueViolation(err) {
+			span.SetAttributes(attribute.Bool("duplicate", true))
 			return ErrDuplicateKey
 		}
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
@@ -105,6 +147,14 @@ func isPostgresUniqueViolation(err error) bool {
 }
 
 func (r *avatarRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {
+	ctx, span := r.createSpan(ctx, "GetByID")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "GetByID", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("avatar_id", id.String()))
+
 	avatar := &domain.Avatar{}
 	query := `SELECT id, user_id, file_name, mime_type, size_bytes, s3_key,
 		thumbnail_s3_keys, upload_status, processing_status, idempotency_key,
@@ -114,14 +164,25 @@ func (r *avatarRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Avatar,
 	err := r.db.GetContext(ctx, avatar, query, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			span.SetAttributes(attribute.Bool("not_found", true))
 			return nil, fmt.Errorf("%w: %v", ErrNotFound, err)
 		}
+		failed = true
+		span.RecordError(err)
 		return nil, err
 	}
 	return avatar, nil
 }
 
 func (r *avatarRepo) GetDeletedInfo(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {
+	ctx, span := r.createSpan(ctx, "GetDeletedInfo")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "GetDeletedInfo", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("avatar_id", id.String()))
+
 	avatar := &domain.Avatar{}
 	query := `SELECT id, user_id, file_name, mime_type, size_bytes, s3_key,
 		thumbnail_s3_keys, upload_status, processing_status, created_at, updated_at, deleted_at
@@ -130,14 +191,25 @@ func (r *avatarRepo) GetDeletedInfo(ctx context.Context, id uuid.UUID) (*domain.
 	err := r.db.GetContext(ctx, avatar, query, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			span.SetAttributes(attribute.Bool("not_found", true))
 			return nil, fmt.Errorf("%w: %v", ErrNotFound, err)
 		}
+		failed = true
+		span.RecordError(err)
 		return nil, err
 	}
 	return avatar, nil
 }
 
 func (r *avatarRepo) GetLatestByUserID(ctx context.Context, userID string) (*domain.Avatar, error) {
+	ctx, span := r.createSpan(ctx, "GetLatestByUserID")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "GetLatestByUserID", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("user_id", userID))
+
 	avatar := &domain.Avatar{}
 	query := `SELECT id, user_id, file_name, mime_type, size_bytes, s3_key,
 		thumbnail_s3_keys, upload_status, processing_status, created_at, updated_at, deleted_at
@@ -147,8 +219,11 @@ func (r *avatarRepo) GetLatestByUserID(ctx context.Context, userID string) (*dom
 	err := r.db.GetContext(ctx, avatar, query, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			span.SetAttributes(attribute.Bool("not_found", true))
 			return nil, fmt.Errorf("%w: %v", ErrNotFound, err)
 		}
+		failed = true
+		span.RecordError(err)
 		return nil, err
 	}
 	return avatar, nil
@@ -162,6 +237,18 @@ func (r *avatarRepo) ListByUserID(ctx context.Context, userID string, limit, off
 		offset = 0
 	}
 
+	ctx, span := r.createSpan(ctx, "ListByUserID")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "ListByUserID", time.Since(start), failed) }()
+
+	span.SetAttributes(
+		attribute.String("user_id", userID),
+		attribute.Int("limit", limit),
+		attribute.Int("offset", offset),
+	)
+
 	var avatars []*domain.Avatar
 	query := `SELECT id, user_id, file_name, mime_type, size_bytes, s3_key,
 		thumbnail_s3_keys, upload_status, processing_status, created_at, updated_at, deleted_at
@@ -170,97 +257,188 @@ func (r *avatarRepo) ListByUserID(ctx context.Context, userID string, limit, off
 
 	err := r.db.SelectContext(ctx, &avatars, query, userID, limit, offset)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return nil, err
 	}
 	return avatars, nil
 }
 
 func (r *avatarRepo) UpdateProcessingStatus(ctx context.Context, id uuid.UUID, status string) error {
+	ctx, span := r.createSpan(ctx, "UpdateProcessingStatus")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "UpdateProcessingStatus", time.Since(start), failed) }()
+
+	span.SetAttributes(
+		attribute.String("avatar_id", id.String()),
+		attribute.String("processing_status", status),
+	)
+
 	query := `UPDATE avatars SET processing_status = $1 WHERE id = $2 AND deleted_at IS NULL`
 	result, err := r.db.ExecContext(ctx, query, status, id)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *avatarRepo) UpdateUploadStatus(ctx context.Context, id uuid.UUID, status string) error {
+	ctx, span := r.createSpan(ctx, "UpdateUploadStatus")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "UpdateUploadStatus", time.Since(start), failed) }()
+
+	span.SetAttributes(
+		attribute.String("avatar_id", id.String()),
+		attribute.String("upload_status", status),
+	)
+
 	query := `UPDATE avatars SET upload_status = $1 WHERE id = $2 AND deleted_at IS NULL`
 	result, err := r.db.ExecContext(ctx, query, status, id)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *avatarRepo) UpdateThumbnailKeys(ctx context.Context, id uuid.UUID, keys map[string]string) error {
+	ctx, span := r.createSpan(ctx, "UpdateThumbnailKeys")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "UpdateThumbnailKeys", time.Since(start), failed) }()
+
+	span.SetAttributes(
+		attribute.String("avatar_id", id.String()),
+		attribute.Int("thumbnails.count", len(keys)),
+	)
+
 	query := `UPDATE avatars SET thumbnail_s3_keys = $1, processing_status = $2 WHERE id = $3 AND deleted_at IS NULL`
 	result, err := r.db.ExecContext(ctx, query, domain.JSONMap(keys), domain.ProcessingComplete, id)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *avatarRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
+	ctx, span := r.createSpan(ctx, "SoftDelete")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "SoftDelete", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("avatar_id", id.String()))
+
 	query := `UPDATE avatars SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *avatarRepo) SoftDeleteLatestByUserID(ctx context.Context, userID string) error {
+	ctx, span := r.createSpan(ctx, "SoftDeleteLatestByUserID")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "SoftDeleteLatestByUserID", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("user_id", userID))
+
 	query := `UPDATE avatars SET deleted_at = NOW() WHERE id IN (SELECT id FROM avatars WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1)`
 	result, err := r.db.ExecContext(ctx, query, userID)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *avatarRepo) SoftDeleteOwned(ctx context.Context, id uuid.UUID, userID string) error {
+	ctx, span := r.createSpan(ctx, "SoftDeleteOwned")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "SoftDeleteOwned", time.Since(start), failed) }()
+
+	span.SetAttributes(
+		attribute.String("avatar_id", id.String()),
+		attribute.String("user_id", userID),
+	)
+
 	query := `UPDATE avatars SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
 	result, err := r.db.ExecContext(ctx, query, id, userID)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (r *avatarRepo) SoftDeleteLatestOwnedByUserID(ctx context.Context, userID string) error {
+	ctx, span := r.createSpan(ctx, "SoftDeleteLatestOwnedByUserID")
+	defer span.End()
+	start := time.Now()
+	var failed bool
+	defer func() { r.recordQuery(ctx, "SoftDeleteLatestOwnedByUserID", time.Since(start), failed) }()
+
+	span.SetAttributes(attribute.String("user_id", userID))
+
 	query := `UPDATE avatars SET deleted_at = NOW() WHERE id IN (SELECT id FROM avatars WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1)`
 	result, err := r.db.ExecContext(ctx, query, userID)
 	if err != nil {
+		failed = true
+		span.RecordError(err)
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		span.SetAttributes(attribute.Bool("not_found", true))
 		return ErrNotFound
 	}
 	return nil

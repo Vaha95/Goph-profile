@@ -10,9 +10,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"time"
+
 	"github.com/gophprofile/avatars-service/internal/testutil"
 	"github.com/labstack/echo/v4"
-	"time"
 )
 
 type mockConnector struct {

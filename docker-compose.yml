@@ -31,7 +31,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
     container_name: avatars_minio
     restart: unless-stopped
     command: server /data --console-address :9001
@@ -62,11 +62,12 @@ services:
         condition: service_healthy
     ports:
       - "8090:8080"
+      - "9090:9090"
     environment:
       SERVER_HOST: "0.0.0.0"
-      SERVER_PORT: 8090
+      SERVER_PORT: 8080
       DB_HOST: postgres
-      DB_PORT: 5435
+      DB_PORT: 5432
       DB_NAME: avatars
       DB_USER: postgres
       DB_PASSWORD: postgres
@@ -81,6 +82,10 @@ services:
       RMQ_QUEUE: avatars.processing
       MAX_UPLOAD_SIZE: 10485760
       CORS_ALLOWED_ORIGINS: "http://localhost:8090"
+      OTEL_SERVICE_NAME: avatars-service
+      OTEL_EXPORTER_ENDPOINT: jaeger:4318
+      METRICS_PORT: "9090"
+      LOG_LEVEL: info
 
   worker:
     build: .
@@ -94,9 +99,11 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    ports:
+      - "9091:9090"
     environment:
       DB_HOST: postgres
-      DB_PORT: 5435
+      DB_PORT: 5432
       DB_NAME: avatars
       DB_USER: postgres
       DB_PASSWORD: postgres
@@ -109,7 +116,87 @@ services:
       RMQ_URL: amqp://guest:guest@rabbitmq:5672
       RMQ_EXCHANGE: avatars.exchange
       RMQ_QUEUE: avatars.processing
+      OTEL_SERVICE_NAME: avatars-service
+      OTEL_EXPORTER_ENDPOINT: jaeger:4318
+      METRICS_PORT: "9090"
+      LOG_LEVEL: info
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: avatars_postgres_exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/avatars?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: avatars_prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9095:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+      - prometheus-data:/prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:2.20.0
+    container_name: avatars_jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+      - "4317:4317"
+
+  grafana:
+    image: grafana/grafana:13.2.0
+    container_name: avatars_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/avatars-service.json
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  loki:
+    image: grafana/loki:3.7.6
+    container_name: avatars_loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+
+  promtail:
+    image: grafana/promtail:3.6.11
+    container_name: avatars_promtail
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./docker/promtail.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
 
 volumes:
   pgdata:
   minio-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
