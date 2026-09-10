@@ -1,0 +1,6 @@
+apiVersion: v2
+name: avatar-service
+description: Helm chart for the Avatars Service — upload, storage, and async thumbnail generation
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

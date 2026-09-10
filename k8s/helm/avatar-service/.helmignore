@@ -1,0 +1,8 @@
+#.helmignore
+/.git
+/.gitignore
+*.md
+*.sum
+.go
+.testing
+.tmp
