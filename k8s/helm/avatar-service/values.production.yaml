@@ -1,0 +1,78 @@
+# Production overrides
+replicaCount: 3
+
+image:
+  repository: registry.example.com/avatar-service
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ROLE_FOR_AVATAR_SERVICE"
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: avatars.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: avatars-tls
+      hosts:
+        - avatars.example.com
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+
+networkPolicy:
+  enabled: true
+
+config:
+  serverHost: "0.0.0.0"
+  serverPort: 8080
+  metricsPort: 9090
+  maxUploadSize: 10485760
+  allowedMimeTypes: "image/jpeg,image/png,image/webp"
+  corsAllowedOrigins: "https://avatars.example.com"
+  logLevel: "warn"
+  otelServiceName: "avatars-service"
+  s3Region: "eu-west-1"
+  s3Bucket: "prod-avatars"
+  s3UsePathStyle: "false"
+  s3Scheme: "https"
+  rmqExchange: "avatars.exchange"
+  rmqQueue: "avatars.processing"
+
+migrations:
+  enabled: true

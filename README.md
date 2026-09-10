@@ -126,3 +126,93 @@ go run ./cmd/worker &
 ```bash
 go test ./...
 ```
+
+## Деплой в Kubernetes
+
+### Вариант 1 — Helm (рекомендуется)
+
+```bash
+# Установка с дефолтными значениями
+helm install avatar-service ./k8s/helm/avatar-service \
+  --namespace avatars --create-namespace
+
+# Установка для продакшена
+helm install avatar-service ./k8s/helm/avatar-service \
+  --namespace avatars --create-namespace \
+  -f ./k8s/helm/avatar-service/values.production.yaml \
+  --set secrets.s3AccessKey=minioadmin \
+  --set secrets.s3SecretKey=minioadmin \
+  --set secrets.dbPassword=postgres \
+  --set secrets.rabbitmqUrl=amqp://guest:guest@rabbitmq:5672
+```
+
+Перед деплоем подготовьте base64-кодированные секреты или передайте их как plain text через `--set secrets.*`.
+
+### Вариант 2 — raw манифесты
+
+```bash
+# Заполните секреты в k8s/manifests/01-secret.yaml (base64)
+kubectl apply -f ./k8s/manifests/
+```
+
+### Структура Kubernetes ресурсов
+
+| Файл              | Ресурс              | Назначение                          |
+| ------------------ | ------------------- | ------------------------------------ |
+| `00-configmap`    | ConfigMap           | Нечувствительная конфигурация        |
+| `01-secret`       | Secret              | Секреты (БД, S3, RabbitMQ)           |
+| `02-serviceaccount` | ServiceAccount    | ServiceAccount с минимальными правами |
+| `03-deployment`   | Deployment          | Поды приложения с пробамии и лимитами |
+| `04-service`      | Service             | ClusterIP + metrics порт             |
+| `05-ingress`      | Ingress             | Маршрутизация внешнего трафика       |
+| `06-hpa`          | HPA                 | Автомасштабирование CPU/RAM          |
+| `07-servicemonitor` | ServiceMonitor    | Сбор метрик Prometheus               |
+| `08-networkpolicy` | NetworkPolicy      | Сетовые политики ingress/egress      |
+
+### Архитектура в Kubernetes
+
+```
+┌──────────────────────────────────────────────────────┐
+│                  Ingress Controller                  │
+│              (nginx, avatars.example.com)            │
+└──────────────────────┬───────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────┐
+│              Service (ClusterIP)                     │
+│           http:80  /  metrics:9090                  │
+└──────┬──────────────────────┬───────────────────────┘
+       │                      │
+┌──────▼──────┐      ┌────────▼────────┐
+│  Pod 1      │  ... │     Pod N       │  ← HPA: 2-10 replicas
+│  :8080      │      │     :8080       │     CPU<70%, MEM<80%
+│  :9090 📊   │      │     :9090 📊    │
+└──────┬──────┘      └────────┬────────┘
+       │                       │
+       │          ┌────────────▼─────────────┐
+       │          │    External Services     │
+       │          │  PostgreSQL  │  S3  │RMQ │
+       │          └─────────────────────────┘
+       │
+┌──────▼──────┐
+│ Prometheus  │  ← ServiceMonitor (30s interval)
+│  scraping   │
+└─────────────┘
+```
+
+### Helm chart — параметры
+
+Ключевые параметры для кастомизации:
+
+| Параметр                              | Описание                          | Дефолт              |
+|---------------------------------------|-----------------------------------|---------------------|
+| `image.repository`                    | Имя Docker-образа                 | `avatar-service`    |
+| `image.tag`                           | Тег образа                        | `latest`            |
+| `replicaCount`                        | Количество реплик (если HPA выкл) | `3`                 |
+| `autoscaling.enabled`                 | Включить HPA                      | `true`              |
+| `autoscaling.minReplicas`             | Минимум реплик                    | `2`                 |
+| `autoscaling.maxReplicas`             | Максимум реплик                   | `10`                |
+| `serviceMonitor.enabled`              | Включить ServiceMonitor           | `true`              |
+| `networkPolicy.enabled`               | Включить NetworkPolicy            | `true`              |
+| `containerSecurityContext.runAsNonRoot` | Запуск от не-root              | `true`              |
+| `ingress.hosts[0].host`              | Доменное имя                      | `avatars.example.com` |
+| `migrations.enabled`                  | Запуск миграций через Helm hook   | `true`              |

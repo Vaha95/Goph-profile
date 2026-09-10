@@ -1,0 +1,130 @@
+replicaCount: 3
+
+image:
+  repository: avatar-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podSecurityContext: {}
+#   fsGroup: 2000
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+
+podLabels: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  metricsPort: 9090
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  hosts:
+    - host: avatars.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: avatars-tls
+  #    hosts:
+  #      - avatars.example.com
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+
+networkPolicy:
+  enabled: true
+
+config:
+  serverHost: "0.0.0.0"
+  serverPort: 8080
+  metricsPort: 9090
+  maxUploadSize: 10485760
+  allowedMimeTypes: "image/jpeg,image/png,image/webp"
+  corsAllowedOrigins: "http://localhost:3000"
+  logLevel: "info"
+  otelServiceName: "avatars-service"
+  s3Region: "us-east-1"
+  s3Bucket: "avatars"
+  s3UsePathStyle: "false"
+  s3Scheme: "https"
+  rmqExchange: "avatars.exchange"
+  rmqQueue: "avatars.processing"
+
+secrets: {}
+#   databaseUrl: ""           # base64-encoded
+#   s3AccessKey: ""           # base64-encoded
+#   s3SecretKey: ""           # base64-encoded
+#   rabbitmqUrl: ""           # base64-encoded
+#   dbPassword: ""            # base64-encoded
+
+migrations:
+  enabled: true
+  image:
+    repository: avatar-service
+    tag: "latest"
+  job:
+    backoffLimit: 3
+
+extraEnv: []
+#   - name: SOME_VAR
+#     value: "some-value"
+
+extraEnvFrom: []
+#   - secretRef:
+#       name: avatar-secrets
